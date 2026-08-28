@@ -2,11 +2,13 @@ import { fromArrayBuffer } from 'geotiff';
 import type { Env } from '../config/env';
 import type { AppLogger } from '../logger';
 import type { Grid } from './grid';
+import { colorizeRadarGrid, decodeRadarHdf5, downsampleRadarGrid, type RadarCorners } from './radar';
 
 export interface RadarMosaic {
   fetchedAt: string;
-  imageUrl: string;
-  imageBase64?: string;
+  validTime: string;
+  corners: RadarCorners;
+  imageBase64: string;
 }
 
 export interface HourlyForecastEntry {
@@ -45,16 +47,26 @@ export class MeteoFranceApiError extends Error {
   }
 }
 
-// Chemins confirmes par la liste des ressources du portail (API "DonneesPubliquesPaquetRadar"
-// et "DonneesPubliquesVigilance"). Le prefixe exact "/public/DPPaquetRadar/v1" reste une
-// convention deduite (DPRadar/DPVigilance suivent ce schema) : a confirmer avec un vrai compte.
-// Le paquet radar renvoie une mosaique complete (metropole + outre-mer) par cycle, sans
-// decoupage par tuile/zoom cote serveur.
+// Chemins confirmes en conditions reelles le 2026-08-28 (API "DonneesPubliquesRadar"). Le
+// produit renvoie le fichier HDF5 (ODIM_H5) le plus recent pour la zone/observation demandee,
+// a la maille 500m (la variante maille=1000 renvoie du BUFR, non exploitable en JS/WASM).
 const ENDPOINTS = {
-  radarMosaic: '/public/DPPaquetRadar/v1/mosaique/paquet',
+  radarProduit: (zone: string, observation: string) =>
+    `/public/DPRadar/v1/mosaiques/${zone}/observations/${observation}/produit`,
   vigilanceCarte: '/public/DPVigilance/v1/cartevigilance/encours',
   aromeWcs: '/public/arome/1.0/wcs/MF-NWP-HIGHRES-AROME-001-FRANCE-WCS/GetCoverage',
 } as const;
+
+const RADAR_ZONE = 'METROPOLE';
+// LAME_D_EAU (cumul de pluie, quantite ACRR) uniquement pour l'instant : REFLECTIVITE ne
+// supporte pas la maille 500m (verifie en conditions reelles, l'API renvoie 400 "la maille
+// '500' n'existe pas") et sa seule maille disponible (1000m) est en BUFR, non decodable.
+const RADAR_OBSERVATION = 'LAME_D_EAU';
+const RADAR_MESH_METERS = 500;
+
+// Taille max (en pixels, plus grand cote) de l'image radar rendue : la grille source
+// (3472x3472, ~12M pixels) est inutilement lourde pour un affichage carte.
+const RADAR_MAX_IMAGE_DIMENSION = 1200;
 
 // TODO: noms de coverage exacts a confirmer (dependent de la nomenclature WCS AROME reelle,
 // visible uniquement dans le GetCapabilities authentifie). Prefixes vraisemblables d'apres
@@ -102,6 +114,13 @@ export function buildAromeGetCoverageUrl(
   url.searchParams.set('subset', `Long(${AROME_BBOX.west},${AROME_BBOX.east})`);
   url.searchParams.append('subset', `Lat(${AROME_BBOX.south},${AROME_BBOX.north})`);
   return { url, validTime, coverageId };
+}
+
+// Isole pour etre testable independamment d'un appel reseau reel.
+export function buildRadarProduitUrl(baseUrl: string): URL {
+  const url = new URL(ENDPOINTS.radarProduit(RADAR_ZONE, RADAR_OBSERVATION), baseUrl);
+  url.searchParams.set('maille', String(RADAR_MESH_METERS));
+  return url;
 }
 
 function downsampleStride(width: number, height: number): number {
@@ -174,8 +193,18 @@ export class HttpMeteoFranceClient implements MeteoFranceClient {
   constructor(private readonly env: Env, private readonly logger: AppLogger) {}
 
   async getRadarMosaic(): Promise<RadarMosaic> {
-    const data = await this.requestJson<{ image_url: string }>(ENDPOINTS.radarMosaic);
-    return { fetchedAt: new Date().toISOString(), imageUrl: data.image_url };
+    const url = buildRadarProduitUrl(this.env.METEOFRANCE_BASE_URL);
+    const buffer = await this.requestBuffer(url);
+
+    const grid = downsampleRadarGrid(await decodeRadarHdf5(buffer), RADAR_MAX_IMAGE_DIMENSION);
+    const png = colorizeRadarGrid(grid);
+
+    return {
+      fetchedAt: new Date().toISOString(),
+      validTime: grid.validTime,
+      corners: grid.corners,
+      imageBase64: png.toString('base64'),
+    };
   }
 
   async getForecastGrid(param: ForecastParam, hourOffset: number): Promise<ForecastGrid> {

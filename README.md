@@ -36,7 +36,7 @@ npm run dev
 ## Obtenir un acces Meteo-France
 
 1. Creer un compte sur https://portail-api.meteofrance.fr
-2. Souscrire aux APIs necessaires (Paquet Radar, Bulletin Vigilance, AROME) sur
+2. Souscrire aux APIs necessaires (Donnees radar, Bulletin Vigilance, AROME) sur
    une meme application ("My Apps" du portail).
 3. Generer une cle ("Generate Token"), en choisissant une duree de validite
    longue (ideal : illimitee si l'option existe) puisque cette cle est utilisee
@@ -55,12 +55,27 @@ Chemins confirmes avec un vrai compte (2026-08-28) :
 - Vigilance : `cartevigilance/encours`, payload enveloppe dans `"product"`,
   couleurs numeriques, phenomenes sous `phenomenon_items` (voir
   `parseVigilanceCarte` dans `src/meteofrance/client.ts`).
-- Radar : `mosaique/paquet` (pas de decoupage par tuile cote serveur).
+- Radar (API "Donnees radar", `/public/DPRadar/v1`) : le produit
+  `mosaiques/{zone}/observations/{observation}/produit?maille=500` renvoie un
+  fichier **HDF5** (format ODIM_H5, standard OPERA/EUMETNET) — pas une image
+  toute faite. Le backend le decode (`h5wasm`), le sous-echantillonne et le
+  colorise en PNG lui-meme (`src/meteofrance/radar.ts`). Seule la zone
+  `METROPOLE` et l'observation `LAME_D_EAU` (cumul de pluie) sont geres pour
+  l'instant ; `REFLECTIVITE` n'a pas de variante maille=500 exploitable (seule
+  la maille 1000, en BUFR, est disponible pour cette observation — pas de
+  decodeur JS/WASM viable, TODO explicite dans le code). Zones outre-mer
+  (ANTILLES, REUNION, NOUVELLE-CALEDONIE) non couvertes.
+- La grille radar est en projection stereographique polaire, donc pas un
+  rectangle aligne en lat/lon : `/radar/latest` renvoie l'image dans sa
+  grille source accompagnee de ses 4 coins geographiques exacts
+  (`corners.ul/ur/ll/lr`), a positionner cote client via un overlay par
+  quadrilatere (MapLibre GL le supporte nativement via `ImageSource`) plutot
+  que de reprojeter cote serveur.
 
-Encore a verifier (nécessite une souscription active a Radar/AROME, pas
-seulement Vigilance) : le payload exact du paquet radar, et les noms de
-coverage AROME (`AROME_COVERAGE_PREFIX` dans `src/meteofrance/client.ts`) —
-utilisables via `GetCapabilities`/`DescribeCoverage` une fois souscrit.
+Encore a verifier (nécessite une souscription active a AROME, pas seulement
+Vigilance/Radar) : les noms de coverage AROME (`AROME_COVERAGE_PREFIX` dans
+`src/meteofrance/client.ts`) — utilisables via `GetCapabilities`/
+`DescribeCoverage` une fois souscrit.
 
 ### Prevision (`/forecast`) : particularite AROME
 
@@ -101,9 +116,9 @@ sont accessibles sans cle.
   `ALERTS_POLL_INTERVAL_MS` / `FORECAST_POLL_INTERVAL_MS`. Les routes
   correspondantes (`/radar/latest`, `/alerts`, `/forecast`) ne font que lire
   le cache et, pour `/forecast`, interpoler le point demande.
-- Le paquet radar Meteo-France ne decoupe pas la mosaique par tuile/zoom cote
-  serveur : `/radar/latest` renvoie toujours l'image complete (metropole +
-  outre-mer), le crop/zoom se fait cote client.
+- L'API radar ne decoupe pas par tuile/zoom cote serveur : `/radar/latest`
+  renvoie toujours l'image METROPOLE complete, avec ses 4 coins geographiques
+  (voir section precedente) ; le crop/zoom se fait cote client.
 - Dans tous les cas, une reponse 5xx de Meteo-France n'est jamais renvoyee
   brute au client : si une donnee en cache existe (meme perimee), elle est
   servie ; sinon l'API renvoie un `503` explicite.

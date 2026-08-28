@@ -5,7 +5,9 @@ export function createMockMeteoClient(): MeteoFranceClient {
   return {
     getRadarMosaic: vi.fn().mockResolvedValue({
       fetchedAt: new Date().toISOString(),
-      imageUrl: 'https://example.test/mosaic.png',
+      validTime: new Date().toISOString(),
+      corners: { ul: [51, -5], ur: [51, 9], ll: [42, -5], lr: [42, 9] },
+      imageBase64: 'mock-png-base64',
     }),
     getForecastGrid: vi.fn().mockImplementation((param, hourOffset) =>
       Promise.resolve({

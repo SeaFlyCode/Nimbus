@@ -23,11 +23,17 @@ describe('fallback sur le cache', () => {
     const client = createMockMeteoClient();
     app = await buildServer(buildTestEnv(), client);
 
-    await app.cache.set(cacheKeys.radarMosaic(), { imageUrl: 'cached.png' }, 60);
+    const cached = {
+      fetchedAt: new Date().toISOString(),
+      validTime: new Date().toISOString(),
+      corners: { ul: [51, -5] as [number, number], ur: [51, 9] as [number, number], ll: [42, -5] as [number, number], lr: [42, 9] as [number, number] },
+      imageBase64: 'cached-png-base64',
+    };
+    await app.cache.set(cacheKeys.radarMosaic(), cached, 60);
     const response = await app.inject({ method: 'GET', url: '/radar/latest' });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().imageUrl).toBe('cached.png');
+    expect(response.json().imageBase64).toBe('cached-png-base64');
     expect(client.getRadarMosaic).not.toHaveBeenCalled();
   });
 
