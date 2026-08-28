@@ -17,7 +17,7 @@ temporairement en panne.
 
 ```bash
 cp .env.example .env
-# renseigner METEOFRANCE_APPLICATION_ID et API_KEYS dans .env
+# renseigner METEOFRANCE_API_KEY et API_KEYS dans .env
 docker compose up --build
 ```
 
@@ -35,27 +35,32 @@ npm run dev
 
 ## Obtenir un acces Meteo-France
 
-L'API Meteo-France utilise OAuth2 client_credentials, pas un token statique :
-
 1. Creer un compte sur https://portail-api.meteofrance.fr
-2. Souscrire aux APIs necessaires (Paquet Radar, Bulletin Vigilance, AROME)
-   dans la section "My APIs" du portail.
-3. Sur une des APIs souscrites, cliquer "Generate Token" pour obtenir un
-   `APPLICATION_ID` (chaine base64 utilisee comme secret Basic).
-4. Renseigner `METEOFRANCE_APPLICATION_ID` dans `.env`.
+2. Souscrire aux APIs necessaires (Paquet Radar, Bulletin Vigilance, AROME) sur
+   une meme application ("My Apps" du portail).
+3. Generer une cle ("Generate Token"), en choisissant une duree de validite
+   longue (ideal : illimitee si l'option existe) puisque cette cle est utilisee
+   telle quelle sur chaque appel, sans mecanisme de refresh cote backend.
+4. Renseigner `METEOFRANCE_API_KEY` dans `.env` avec cette cle.
 
-Au demarrage, le backend echange cet `APPLICATION_ID` contre un `access_token`
-de courte duree (~1h) via `POST METEOFRANCE_TOKEN_URL`, et le rafraichit
-automatiquement avant expiration (`src/meteofrance/client.ts`). Les appels de
-donnees se font ensuite sur `METEOFRANCE_BASE_URL` (`public-api.meteofrance.fr`,
-different du portail) avec ce token en Bearer.
+**Important** : cette cle se transmet via un header custom **`apikey`**, pas
+`Authorization: Bearer` (confirme empiriquement le 2026-08-28 : la meme cle en
+Bearer renvoie `401 Invalid Credentials`, en `apikey` elle fonctionne). C'est
+un JWT auto-suffisant signe par le portail (type WSO2 "apiKey"), pas un
+`access_token` OAuth2 classique — pas d'echange ni de refresh necessaire.
+Les appels de donnees se font sur `METEOFRANCE_BASE_URL`
+(`public-api.meteofrance.fr`, different du portail).
 
-Les chemins d'endpoint exacts (constante `ENDPOINTS` dans
-`src/meteofrance/client.ts`) et les noms de coverage AROME (`AROME_COVERAGE_PREFIX`)
-sont marques TODO dans le code : la doc Swagger complete de chaque API n'est
-accessible qu'authentifie sur le portail. A verifier/ajuster avec un vrai
-abonnement actif. Le reste de l'architecture (cache, routes, jobs, fallback)
-fonctionne independamment de ces chemins exacts.
+Chemins confirmes avec un vrai compte (2026-08-28) :
+- Vigilance : `cartevigilance/encours`, payload enveloppe dans `"product"`,
+  couleurs numeriques, phenomenes sous `phenomenon_items` (voir
+  `parseVigilanceCarte` dans `src/meteofrance/client.ts`).
+- Radar : `mosaique/paquet` (pas de decoupage par tuile cote serveur).
+
+Encore a verifier (nécessite une souscription active a Radar/AROME, pas
+seulement Vigilance) : le payload exact du paquet radar, et les noms de
+coverage AROME (`AROME_COVERAGE_PREFIX` dans `src/meteofrance/client.ts`) —
+utilisables via `GetCapabilities`/`DescribeCoverage` une fois souscrit.
 
 ### Prevision (`/forecast`) : particularite AROME
 

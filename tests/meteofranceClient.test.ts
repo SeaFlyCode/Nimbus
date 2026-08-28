@@ -36,26 +36,30 @@ describe('buildAromeGetCoverageUrl', () => {
 });
 
 describe('parseVigilanceCarte', () => {
+  // Forme reelle confirmee sur un compte actif le 2026-08-28 (reponse enveloppee dans
+  // "product", couleurs numeriques, phenomenes sous "phenomenon_items").
   it('parse une carte vigilance en Vigilance par departement', () => {
     const raw = {
-      periods: [
-        {
-          echeance: 'J',
-          timelaps: {
-            domain_ids: [
-              {
-                domain_id: '75',
-                max_color_id: '3',
-                phenomenon_max_colors: [
-                  { phenomenon_id: '1', phenomenon_max_color_id: '3' },
-                  { phenomenon_id: '2', phenomenon_max_color_id: '1' },
-                ],
-              },
-              { domain_id: '13', max_color_id: '1' },
-            ],
+      product: {
+        periods: [
+          {
+            echeance: 'J',
+            timelaps: {
+              domain_ids: [
+                {
+                  domain_id: '75',
+                  max_color_id: 2,
+                  phenomenon_items: [
+                    { phenomenon_id: '3', phenomenon_max_color_id: 2 },
+                    { phenomenon_id: '1', phenomenon_max_color_id: 1 },
+                  ],
+                },
+                { domain_id: '13', max_color_id: 1 },
+              ],
+            },
           },
-        },
-      ],
+        ],
+      },
     };
 
     const result = parseVigilanceCarte(raw, '2026-08-28T10:00:00.000Z');
@@ -63,8 +67,8 @@ describe('parseVigilanceCarte', () => {
     expect(result['75']).toEqual({
       fetchedAt: '2026-08-28T10:00:00.000Z',
       departement: '75',
-      color: 'orange',
-      risks: ['vent'],
+      color: 'jaune',
+      risks: ['orages'],
     });
     expect(result['13'].color).toBe('vert');
     expect(result['13'].risks).toEqual([]);
@@ -80,45 +84,18 @@ describe('HttpMeteoFranceClient auth', () => {
     vi.unstubAllGlobals();
   });
 
-  it('echange l APPLICATION_ID contre un access_token puis l utilise en Bearer', async () => {
+  // Le portail WSO2 transmet la cle self-service via le header "apikey", pas
+  // "Authorization: Bearer" (confirme empiriquement : Bearer renvoie 401 avec la meme cle).
+  it('transmet la cle via le header apikey', async () => {
     const env = buildTestEnv();
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === env.METEOFRANCE_TOKEN_URL) {
-        return Promise.resolve(jsonResponse({ access_token: 'token-1', expires_in: 3600 }));
-      }
-      return Promise.resolve(jsonResponse({ periods: [] }));
-    });
+    const fetchMock = vi.fn(() => Promise.resolve(jsonResponse({ product: { periods: [] } })));
     vi.stubGlobal('fetch', fetchMock);
 
     const client = new HttpMeteoFranceClient(env, logger);
     await client.getVigilanceMap();
 
-    const tokenCall = fetchMock.mock.calls.find(([input]) => String(input) === env.METEOFRANCE_TOKEN_URL);
-    expect(tokenCall?.[1]?.headers).toMatchObject({
-      Authorization: `Basic ${env.METEOFRANCE_APPLICATION_ID}`,
+    expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
+      apikey: env.METEOFRANCE_API_KEY,
     });
-
-    const dataCall = fetchMock.mock.calls.find(([input]) => String(input) !== env.METEOFRANCE_TOKEN_URL);
-    expect(dataCall?.[1]?.headers).toMatchObject({ Authorization: 'Bearer token-1' });
-  });
-
-  it('deduplique les refresh de token concurrents', async () => {
-    const env = buildTestEnv();
-    let tokenCalls = 0;
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url === env.METEOFRANCE_TOKEN_URL) {
-        tokenCalls++;
-        return Promise.resolve(jsonResponse({ access_token: `token-${tokenCalls}`, expires_in: 3600 }));
-      }
-      return Promise.resolve(jsonResponse({ periods: [] }));
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const client = new HttpMeteoFranceClient(env, logger);
-    await Promise.all([client.getVigilanceMap(), client.getVigilanceMap(), client.getVigilanceMap()]);
-
-    expect(tokenCalls).toBe(1);
   });
 });

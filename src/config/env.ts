@@ -27,12 +27,12 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
   // Domaine des donnees (radar/vigilance/prevision). Le portail (portail-api.meteofrance.fr)
-  // ne sert lui que l'obtention de token et la doc.
+  // ne sert que la doc et la generation de cle.
   METEOFRANCE_BASE_URL: z.string().url().default('https://public-api.meteofrance.fr'),
-  METEOFRANCE_TOKEN_URL: z.string().url().default('https://portail-api.meteofrance.fr/token'),
-  // APPLICATION_ID = secret Basic genere sur le portail ("Generate Token" dans "My APIs"),
-  // echange contre un access_token de courte duree via METEOFRANCE_TOKEN_URL.
-  METEOFRANCE_APPLICATION_ID: z.string().min(1, 'METEOFRANCE_APPLICATION_ID est requis'),
+  // Cle auto-generee sur le portail ("Generate Token" dans "My Apps", duree au choix). C'est
+  // un JWT self-contained (type "apiKey" WSO2) transmis tel quel via le header "apikey" sur
+  // chaque appel : pas d'echange OAuth2, pas de refresh (confirme empiriquement le 2026-08-28).
+  METEOFRANCE_API_KEY: z.string().min(1, 'METEOFRANCE_API_KEY est requis'),
   METEOFRANCE_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   METEOFRANCE_RETRY_COUNT: z.coerce.number().int().min(0).max(5).default(2),
 

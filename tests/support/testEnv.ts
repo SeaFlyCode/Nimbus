@@ -3,8 +3,7 @@ import { loadEnv, resetEnvCacheForTests, type Env } from '../../src/config/env';
 const BASE = {
   NODE_ENV: 'test',
   LOG_LEVEL: 'silent',
-  METEOFRANCE_APPLICATION_ID: 'dGVzdC1hcHBsaWNhdGlvbi1pZA==',
-  METEOFRANCE_TOKEN_URL: 'https://portail-api.meteofrance.test/token',
+  METEOFRANCE_API_KEY: 'test-api-key',
   REDIS_URL: 'redis://localhost:6379',
   API_KEYS: '',
   RADAR_POLL_INTERVAL_MS: '300000',

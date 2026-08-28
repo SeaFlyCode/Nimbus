@@ -110,15 +110,17 @@ function downsampleStride(width: number, height: number): number {
 
 interface RawVigilanceDomainEntry {
   domain_id: string;
-  max_color_id: string;
-  phenomenon_max_colors?: Array<{ phenomenon_id: string; phenomenon_max_color_id: string }>;
+  max_color_id: number;
+  phenomenon_items?: Array<{ phenomenon_id: string; phenomenon_max_color_id: number }>;
 }
 
 interface RawVigilanceCarte {
-  periods?: Array<{
-    echeance?: string;
-    timelaps?: { domain_ids?: RawVigilanceDomainEntry[] };
-  }>;
+  product?: {
+    periods?: Array<{
+      echeance?: string;
+      timelaps?: { domain_ids?: RawVigilanceDomainEntry[] };
+    }>;
+  };
 }
 
 const VIGILANCE_COLOR_BY_ID: Record<string, Vigilance['color']> = {
@@ -140,20 +142,21 @@ const VIGILANCE_PHENOMENON_LABELS: Record<string, string> = {
   '9': 'vagues-submersion',
 };
 
-// TODO: forme exacte de la reponse cartevigilance/encours a confirmer avec un vrai payload
-// (doc Swagger authentifiee uniquement). Structure vraisemblable d'apres la documentation
-// publique historique de la vigilance Meteo-France (echeances "J"/"J1", une entree par
-// domaine/departement avec une couleur max et la liste des phenomenes concernes).
+// Forme confirmee avec un vrai payload (compte SeaFly, 2026-08-28) : la reponse est enveloppee
+// dans "product", les couleurs sont des nombres (pas des chaines), et la liste de phenomenes
+// par domaine s'appelle "phenomenon_items". domain_id couvre les departements metropole/DOM
+// (ce qui nous interesse), des zones maritimes (4 chiffres) et "FRA" (national) qu'on ignore.
 export function parseVigilanceCarte(raw: unknown, fetchedAt: string): Record<string, Vigilance> {
   const carte = raw as RawVigilanceCarte;
-  const currentPeriod = carte.periods?.find((p) => p.echeance === 'J') ?? carte.periods?.[0];
+  const periods = carte.product?.periods;
+  const currentPeriod = periods?.find((p) => p.echeance === 'J') ?? periods?.[0];
   const domains = currentPeriod?.timelaps?.domain_ids ?? [];
 
   const result: Record<string, Vigilance> = {};
   for (const domain of domains) {
-    const color = VIGILANCE_COLOR_BY_ID[domain.max_color_id] ?? 'vert';
-    const risks = (domain.phenomenon_max_colors ?? [])
-      .filter((p) => (VIGILANCE_COLOR_BY_ID[p.phenomenon_max_color_id] ?? 'vert') !== 'vert')
+    const color = VIGILANCE_COLOR_BY_ID[String(domain.max_color_id)] ?? 'vert';
+    const risks = (domain.phenomenon_items ?? [])
+      .filter((p) => (VIGILANCE_COLOR_BY_ID[String(p.phenomenon_max_color_id)] ?? 'vert') !== 'vert')
       .map((p) => VIGILANCE_PHENOMENON_LABELS[p.phenomenon_id])
       .filter((label): label is string => Boolean(label));
 
@@ -167,62 +170,8 @@ export function parseVigilanceCarte(raw: unknown, fetchedAt: string): Record<str
   return result;
 }
 
-// Rafraichit l'access_token OAuth2 (client_credentials) et le met en cache memoire jusqu'a
-// une marge avant expiration. Les refresh concurrents partagent la meme promesse en cours
-// pour eviter de spammer /token si plusieurs requetes arrivent pendant un refresh.
-const TOKEN_REFRESH_MARGIN_MS = 60_000;
-
-class MeteoFranceTokenProvider {
-  private token?: { accessToken: string; expiresAt: number };
-  private pending?: Promise<string>;
-
-  constructor(private readonly env: Env) {}
-
-  async getAccessToken(forceRefresh = false): Promise<string> {
-    if (!forceRefresh && this.token && this.token.expiresAt > Date.now()) {
-      return this.token.accessToken;
-    }
-    if (!this.pending) {
-      this.pending = this.fetchToken().finally(() => {
-        this.pending = undefined;
-      });
-    }
-    return this.pending;
-  }
-
-  invalidate(): void {
-    this.token = undefined;
-  }
-
-  private async fetchToken(): Promise<string> {
-    const response = await fetch(this.env.METEOFRANCE_TOKEN_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${this.env.METEOFRANCE_APPLICATION_ID}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials',
-    });
-
-    if (!response.ok) {
-      throw new MeteoFranceApiError(`Echec obtention token Meteo-France (${response.status})`);
-    }
-
-    const data = (await response.json()) as { access_token: string; expires_in: number };
-    this.token = {
-      accessToken: data.access_token,
-      expiresAt: Date.now() + data.expires_in * 1000 - TOKEN_REFRESH_MARGIN_MS,
-    };
-    return this.token.accessToken;
-  }
-}
-
 export class HttpMeteoFranceClient implements MeteoFranceClient {
-  private readonly tokenProvider: MeteoFranceTokenProvider;
-
-  constructor(private readonly env: Env, private readonly logger: AppLogger) {
-    this.tokenProvider = new MeteoFranceTokenProvider(env);
-  }
+  constructor(private readonly env: Env, private readonly logger: AppLogger) {}
 
   async getRadarMosaic(): Promise<RadarMosaic> {
     const data = await this.requestJson<{ image_url: string }>(ENDPOINTS.radarMosaic);
@@ -287,16 +236,13 @@ export class HttpMeteoFranceClient implements MeteoFranceClient {
       const timeout = setTimeout(() => controller.abort(), this.env.METEOFRANCE_TIMEOUT_MS);
 
       try {
-        const accessToken = await this.tokenProvider.getAccessToken();
+        // Portail WSO2 : la cle auto-generee ("API Key", cf. README) se transmet via le header
+        // custom "apikey", pas "Authorization: Bearer" (confirme empiriquement le 2026-08-28,
+        // "Authorization: Bearer" renvoie 401 Invalid Credentials avec cette meme cle).
         const response = await fetch(url, {
-          headers: { Authorization: `Bearer ${accessToken}` },
+          headers: { apikey: this.env.METEOFRANCE_API_KEY },
           signal: controller.signal,
         });
-
-        if (response.status === 401) {
-          this.tokenProvider.invalidate();
-          throw new MeteoFranceApiError(`Meteo-France a repondu 401 sur ${url.pathname}`);
-        }
 
         if (!response.ok) {
           throw new MeteoFranceApiError(`Meteo-France a repondu ${response.status} sur ${url.pathname}`);
