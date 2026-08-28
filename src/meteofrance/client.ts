@@ -9,15 +9,6 @@ export interface RadarMosaic {
   imageBase64?: string;
 }
 
-export interface RadarTile {
-  fetchedAt: string;
-  lat: number;
-  lon: number;
-  zoom: number;
-  imageUrl: string;
-  imageBase64?: string;
-}
-
 export interface HourlyForecastEntry {
   time: string;
   temperatureC: number;
@@ -43,7 +34,6 @@ export interface Vigilance {
 
 export interface MeteoFranceClient {
   getRadarMosaic(): Promise<RadarMosaic>;
-  getRadarTile(lat: number, lon: number, zoom: number): Promise<RadarTile>;
   getForecastGrid(param: ForecastParam, hourOffset: number): Promise<ForecastGrid>;
   getVigilanceMap(): Promise<Record<string, Vigilance>>;
 }
@@ -55,13 +45,13 @@ export class MeteoFranceApiError extends Error {
   }
 }
 
-// TODO: chemins a confirmer avec un vrai compte sur https://portail-api.meteofrance.fr
-// (la doc Swagger complete n'est accessible qu'authentifie). "mosaiques" est le nom de
-// produit indique par le portail pour DPRadar ; le sous-chemin exact de l'image France
-// (identifiant de mosaique ? parametre de zone ?) reste a verifier.
+// Chemins confirmes par la liste des ressources du portail (API "DonneesPubliquesPaquetRadar"
+// et "DonneesPubliquesVigilance"). Le prefixe exact "/public/DPPaquetRadar/v1" reste une
+// convention deduite (DPRadar/DPVigilance suivent ce schema) : a confirmer avec un vrai compte.
+// Le paquet radar renvoie une mosaique complete (metropole + outre-mer) par cycle, sans
+// decoupage par tuile/zoom cote serveur.
 const ENDPOINTS = {
-  radarMosaic: '/public/DPRadar/v1/mosaiques/FRANCE',
-  radarTile: '/public/DPRadar/v1/mosaiques/tile',
+  radarMosaic: '/public/DPPaquetRadar/v1/mosaique/paquet',
   vigilanceCarte: '/public/DPVigilance/v1/cartevigilance/encours',
   aromeWcs: '/public/arome/1.0/wcs/MF-NWP-HIGHRES-AROME-001-FRANCE-WCS/GetCoverage',
 } as const;
@@ -237,15 +227,6 @@ export class HttpMeteoFranceClient implements MeteoFranceClient {
   async getRadarMosaic(): Promise<RadarMosaic> {
     const data = await this.requestJson<{ image_url: string }>(ENDPOINTS.radarMosaic);
     return { fetchedAt: new Date().toISOString(), imageUrl: data.image_url };
-  }
-
-  async getRadarTile(lat: number, lon: number, zoom: number): Promise<RadarTile> {
-    const data = await this.requestJson<{ image_url: string }>(ENDPOINTS.radarTile, {
-      lat: String(lat),
-      lon: String(lon),
-      zoom: String(zoom),
-    });
-    return { fetchedAt: new Date().toISOString(), lat, lon, zoom, imageUrl: data.image_url };
   }
 
   async getForecastGrid(param: ForecastParam, hourOffset: number): Promise<ForecastGrid> {

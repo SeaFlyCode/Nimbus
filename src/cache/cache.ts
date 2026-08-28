@@ -11,8 +11,6 @@ const KEY_PREFIX = 'nimbus';
 
 export const cacheKeys = {
   radarMosaic: () => `${KEY_PREFIX}:radar:mosaic`,
-  radarTile: (lat: number, lon: number, zoom: number) =>
-    `${KEY_PREFIX}:radar:tile:${lat.toFixed(2)}:${lon.toFixed(2)}:${zoom}`,
   radarHistory: () => `${KEY_PREFIX}:radar:history`,
   forecastGrid: (hourOffset: number) => `${KEY_PREFIX}:forecast:grid:${hourOffset}`,
   vigilance: (departement: string) => `${KEY_PREFIX}:alerts:${departement}`,

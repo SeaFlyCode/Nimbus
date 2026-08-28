@@ -10,7 +10,6 @@ export const LON_MAX = 56;
 
 export const latSchema = Type.Number({ minimum: LAT_MIN, maximum: LAT_MAX });
 export const lonSchema = Type.Number({ minimum: LON_MIN, maximum: LON_MAX });
-export const zoomSchema = Type.Integer({ minimum: 1, maximum: 18 });
 
 export const departementSchema = Type.String({ pattern: '^(0[1-9]|[1-8][0-9]|9[0-5]|2A|2B|97[1-6])$' });
 

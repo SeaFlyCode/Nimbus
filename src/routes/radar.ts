@@ -1,15 +1,7 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { Type, type Static } from '@sinclair/typebox';
 import { cacheKeys } from '../cache/cache';
-import type { RadarTile } from '../meteofrance/client';
-import { latSchema, lonSchema, zoomSchema, minutesSchema, errorResponseSchema } from './schemas';
-
-const latestQuerySchema = Type.Object({
-  lat: Type.Optional(latSchema),
-  lon: Type.Optional(lonSchema),
-  zoom: Type.Optional(zoomSchema),
-});
-type LatestQuery = Static<typeof latestQuerySchema>;
+import { minutesSchema, errorResponseSchema } from './schemas';
 
 const historyQuerySchema = Type.Object({
   minutes: Type.Optional(minutesSchema),
@@ -21,28 +13,16 @@ function unavailable(reply: FastifyReply, message: string) {
 }
 
 export async function radarRoutes(app: FastifyInstance): Promise<void> {
-  app.get<{ Querystring: LatestQuery }>(
+  // Le paquet radar Meteo-France ne fournit pas de decoupage par tuile/zoom cote serveur :
+  // il renvoie une mosaique complete (metropole + outre-mer) par cycle. Le crop/zoom se fait
+  // cote client sur cette image.
+  app.get(
     '/radar/latest',
-    { schema: { querystring: latestQuerySchema, response: { 503: errorResponseSchema } } },
-    async (request, reply) => {
-      const { lat, lon, zoom } = request.query;
-      const anyProvided = lat !== undefined || lon !== undefined || zoom !== undefined;
-      const allProvided = lat !== undefined && lon !== undefined && zoom !== undefined;
-
-      if (anyProvided && !allProvided) {
-        return reply.code(400).send({
-          error: 'BadRequest',
-          message: 'lat, lon et zoom doivent etre fournis ensemble',
-        });
-      }
-
-      if (!allProvided) {
-        const entry = await app.cache.get(cacheKeys.radarMosaic());
-        if (!entry) return unavailable(reply, 'Mosaique radar indisponible pour le moment');
-        return entry.data;
-      }
-
-      return handleTile(app, reply, lat!, lon!, zoom!);
+    { schema: { response: { 503: errorResponseSchema } } },
+    async (_request, reply) => {
+      const entry = await app.cache.get(cacheKeys.radarMosaic());
+      if (!entry) return unavailable(reply, 'Mosaique radar indisponible pour le moment');
+      return entry.data;
     },
   );
 
@@ -63,26 +43,4 @@ export async function radarRoutes(app: FastifyInstance): Promise<void> {
       return { minutes, items: history.map((entry) => entry.data) };
     },
   );
-}
-
-async function handleTile(
-  app: FastifyInstance,
-  reply: FastifyReply,
-  lat: number,
-  lon: number,
-  zoom: number,
-) {
-  const key = cacheKeys.radarTile(lat, lon, zoom);
-  const cached = await app.cache.get<RadarTile>(key);
-  if (cached) return cached.data;
-
-  try {
-    const tile = await app.meteoClient.getRadarTile(lat, lon, zoom);
-    const ttlSeconds = Math.ceil((app.env.RADAR_POLL_INTERVAL_MS * app.env.FRESHNESS_STALE_MULTIPLIER * 2) / 1000);
-    await app.cache.set(key, tile, ttlSeconds);
-    return tile;
-  } catch (err) {
-    app.log.error({ err, lat, lon, zoom }, 'Echec recuperation tuile radar');
-    return unavailable(reply, 'Tuile radar momentanement indisponible');
-  }
 }

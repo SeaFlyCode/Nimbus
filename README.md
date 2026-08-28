@@ -38,7 +38,7 @@ npm run dev
 L'API Meteo-France utilise OAuth2 client_credentials, pas un token statique :
 
 1. Creer un compte sur https://portail-api.meteofrance.fr
-2. Souscrire aux APIs necessaires (radar DPRadar, vigilance DPVigilance, AROME)
+2. Souscrire aux APIs necessaires (Paquet Radar, Bulletin Vigilance, AROME)
    dans la section "My APIs" du portail.
 3. Sur une des APIs souscrites, cliquer "Generate Token" pour obtenir un
    `APPLICATION_ID` (chaine base64 utilisee comme secret Basic).
@@ -96,9 +96,9 @@ sont accessibles sans cle.
   `ALERTS_POLL_INTERVAL_MS` / `FORECAST_POLL_INTERVAL_MS`. Les routes
   correspondantes (`/radar/latest`, `/alerts`, `/forecast`) ne font que lire
   le cache et, pour `/forecast`, interpoler le point demande.
-- **Tuile radar** (`/radar/latest?lat&lon&zoom`) reste parametree par point
-  geographique arbitraire et suit un pattern cache-aside (lecture cache, appel
-  Meteo-France uniquement sur miss, mise en cache du resultat).
+- Le paquet radar Meteo-France ne decoupe pas la mosaique par tuile/zoom cote
+  serveur : `/radar/latest` renvoie toujours l'image complete (metropole +
+  outre-mer), le crop/zoom se fait cote client.
 - Dans tous les cas, une reponse 5xx de Meteo-France n'est jamais renvoyee
   brute au client : si une donnee en cache existe (meme perimee), elle est
   servie ; sinon l'API renvoie un `503` explicite.
@@ -106,11 +106,8 @@ sont accessibles sans cle.
 ## Endpoints
 
 ```bash
-# Mosaique radar France entiere (depuis le cache)
+# Mosaique radar France entiere (depuis le cache, pas de decoupage par tuile cote serveur)
 curl http://localhost:3000/radar/latest -H "X-API-Key: <cle>"
-
-# Tuile radar pour une zone
-curl "http://localhost:3000/radar/latest?lat=48.85&lon=2.35&zoom=8" -H "X-API-Key: <cle>"
 
 # Historique des N dernieres minutes pour l'animation
 curl "http://localhost:3000/radar/history?minutes=60" -H "X-API-Key: <cle>"

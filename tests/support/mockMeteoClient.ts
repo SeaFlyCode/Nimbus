@@ -7,13 +7,6 @@ export function createMockMeteoClient(): MeteoFranceClient {
       fetchedAt: new Date().toISOString(),
       imageUrl: 'https://example.test/mosaic.png',
     }),
-    getRadarTile: vi.fn().mockResolvedValue({
-      fetchedAt: new Date().toISOString(),
-      lat: 48.85,
-      lon: 2.35,
-      zoom: 8,
-      imageUrl: 'https://example.test/tile.png',
-    }),
     getForecastGrid: vi.fn().mockImplementation((param, hourOffset) =>
       Promise.resolve({
         param,

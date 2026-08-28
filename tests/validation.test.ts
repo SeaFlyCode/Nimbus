@@ -11,33 +11,6 @@ describe('validation des query params', () => {
     await app.close();
   });
 
-  it('rejette une latitude hors bornes sur /radar/latest', async () => {
-    app = await buildServer(buildTestEnv(), createMockMeteoClient());
-    const response = await app.inject({
-      method: 'GET',
-      url: '/radar/latest?lat=200&lon=2&zoom=8',
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
-  it('rejette des parametres de tuile partiels', async () => {
-    app = await buildServer(buildTestEnv(), createMockMeteoClient());
-    const response = await app.inject({
-      method: 'GET',
-      url: '/radar/latest?lat=48.8&lon=2.3',
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
-  it('rejette un zoom invalide', async () => {
-    app = await buildServer(buildTestEnv(), createMockMeteoClient());
-    const response = await app.inject({
-      method: 'GET',
-      url: '/radar/latest?lat=48.8&lon=2.3&zoom=99',
-    });
-    expect(response.statusCode).toBe(400);
-  });
-
   it('rejette des minutes hors bornes sur /radar/history', async () => {
     app = await buildServer(buildTestEnv(), createMockMeteoClient());
     const response = await app.inject({ method: 'GET', url: '/radar/history?minutes=99999' });
