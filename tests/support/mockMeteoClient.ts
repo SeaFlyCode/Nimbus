@@ -14,19 +14,22 @@ export function createMockMeteoClient(): MeteoFranceClient {
       zoom: 8,
       imageUrl: 'https://example.test/tile.png',
     }),
-    getForecast: vi.fn().mockResolvedValue({
-      fetchedAt: new Date().toISOString(),
-      lat: 48.85,
-      lon: 2.35,
-      hourly: [
-        { time: new Date().toISOString(), temperatureC: 18, precipitationProbability: 20, rainMm: 0, windKmh: 10 },
-      ],
-    }),
-    getVigilance: vi.fn().mockResolvedValue({
-      fetchedAt: new Date().toISOString(),
-      departement: '75',
-      color: 'vert',
-      risks: [],
+    getForecastGrid: vi.fn().mockImplementation((param, hourOffset) =>
+      Promise.resolve({
+        param,
+        hourOffset,
+        validTime: new Date().toISOString(),
+        west: -5.5,
+        south: 41,
+        east: 10,
+        north: 51.5,
+        width: 2,
+        height: 2,
+        values: [18, 18, 18, 18],
+      }),
+    ),
+    getVigilanceMap: vi.fn().mockResolvedValue({
+      '75': { fetchedAt: new Date().toISOString(), departement: '75', color: 'vert', risks: [] },
     }),
   };
 }

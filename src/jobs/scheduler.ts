@@ -1,8 +1,13 @@
 import type { Env } from '../config/env';
 import type { AppLogger } from '../logger';
-import type { MeteoFranceClient } from '../meteofrance/client';
+import type { ForecastGrid, MeteoFranceClient } from '../meteofrance/client';
+import type { ForecastHourCacheEntry } from '../meteofrance/grid';
+import { FORECAST_HOUR_OFFSETS, FORECAST_PARAMS } from '../meteofrance/forecastPlan';
 import { CacheStore, cacheKeys, type DataKind } from '../cache/cache';
-import { FRENCH_DEPARTMENT_CODES } from './departments';
+import { RateThrottle } from '../utils/throttle';
+
+// 50 req/min sur l'API AROME => >= 1.2s entre deux appels ; marge a 1.3s.
+const AROME_MIN_INTERVAL_MS = 1300;
 
 // TTL cache volontairement plus grand que le seuil "degraded" de /health : si Meteo-France
 // est en panne, on veut pouvoir continuer a servir la derniere donnee connue (fallback) meme
@@ -23,6 +28,7 @@ interface PollJob {
 
 export class Scheduler {
   private timers: NodeJS.Timeout[] = [];
+  private readonly aromeThrottle = new RateThrottle(AROME_MIN_INTERVAL_MS);
 
   constructor(
     private readonly env: Env,
@@ -42,6 +48,11 @@ export class Scheduler {
         kind: 'alerts',
         intervalMs: this.env.ALERTS_POLL_INTERVAL_MS,
         run: () => this.pollVigilance(),
+      },
+      {
+        kind: 'forecast',
+        intervalMs: this.env.FORECAST_POLL_INTERVAL_MS,
+        run: () => this.pollForecast(),
       },
     ];
 
@@ -76,20 +87,60 @@ export class Scheduler {
   }
 
   private async pollVigilance(): Promise<void> {
+    // cartevigilance/encours renvoie la carte du pays entier en un seul appel : pas besoin
+    // de boucler par departement.
     const ttl = ttlSecondsFor(this.env, this.env.ALERTS_POLL_INTERVAL_MS);
-    const results = await Promise.allSettled(
-      FRENCH_DEPARTMENT_CODES.map(async (departement) => {
-        const vigilance = await this.client.getVigilance(departement);
-        await this.cache.set(cacheKeys.vigilance(departement), vigilance, ttl);
-      }),
+    const vigilanceByDepartement = await this.client.getVigilanceMap();
+    const departements = Object.keys(vigilanceByDepartement);
+    if (departements.length === 0) {
+      throw new Error('Reponse vigilance vide lors du polling');
+    }
+    await Promise.all(
+      departements.map((departement) =>
+        this.cache.set(cacheKeys.vigilance(departement), vigilanceByDepartement[departement], ttl),
+      ),
     );
-    const failedCount = results.filter((r) => r.status === 'rejected').length;
-    if (failedCount === results.length) {
-      throw new Error('Echec de tous les departements lors du polling vigilance');
-    }
-    if (failedCount > 0) {
-      this.logger.warn({ failedCount, total: results.length }, 'Polling vigilance partiellement en echec');
-    }
     await this.cache.markFetched('alerts');
+  }
+
+  // Pre-charge un petit ensemble d'echeances/parametres AROME, mutualise entre tous les
+  // clients : le rate-limit AROME (50 req/min) ne permettrait pas un fetch par requete client.
+  private async pollForecast(): Promise<void> {
+    const ttl = ttlSecondsFor(this.env, this.env.FORECAST_POLL_INTERVAL_MS);
+    let successCount = 0;
+
+    for (const hourOffset of FORECAST_HOUR_OFFSETS) {
+      try {
+        const entry = await this.fetchForecastHour(hourOffset);
+        await this.cache.set(cacheKeys.forecastGrid(hourOffset), entry, ttl);
+        successCount++;
+      } catch (err) {
+        this.logger.warn({ hourOffset, err }, 'Echec recuperation grille prevision');
+      }
+    }
+
+    if (successCount === 0) {
+      throw new Error('Echec de toutes les echeances lors du polling prevision');
+    }
+    await this.cache.markFetched('forecast');
+  }
+
+  private async fetchForecastHour(hourOffset: number): Promise<ForecastHourCacheEntry> {
+    const grids: Partial<Record<ForecastGrid['param'], ForecastGrid>> = {};
+    for (const param of FORECAST_PARAMS) {
+      grids[param] = await this.aromeThrottle.run(() => this.client.getForecastGrid(param, hourOffset));
+    }
+
+    const temperature = grids.TEMPERATURE!;
+    return {
+      hourOffset,
+      validTime: temperature.validTime,
+      bbox: { west: temperature.west, south: temperature.south, east: temperature.east, north: temperature.north },
+      width: temperature.width,
+      height: temperature.height,
+      temperatureC: temperature.values,
+      precipitationMm: grids.PRECIPITATION!.values,
+      windKmh: grids.WIND_SPEED!.values,
+    };
   }
 }

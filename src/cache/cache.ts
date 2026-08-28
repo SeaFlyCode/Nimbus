@@ -14,8 +14,7 @@ export const cacheKeys = {
   radarTile: (lat: number, lon: number, zoom: number) =>
     `${KEY_PREFIX}:radar:tile:${lat.toFixed(2)}:${lon.toFixed(2)}:${zoom}`,
   radarHistory: () => `${KEY_PREFIX}:radar:history`,
-  forecast: (lat: number, lon: number) =>
-    `${KEY_PREFIX}:forecast:${lat.toFixed(2)}:${lon.toFixed(2)}`,
+  forecastGrid: (hourOffset: number) => `${KEY_PREFIX}:forecast:grid:${hourOffset}`,
   vigilance: (departement: string) => `${KEY_PREFIX}:alerts:${departement}`,
   consecutiveFailures: (kind: DataKind) => `${KEY_PREFIX}:failures:${kind}`,
   lastFetchedAt: (kind: DataKind) => `${KEY_PREFIX}:last-fetched:${kind}`,

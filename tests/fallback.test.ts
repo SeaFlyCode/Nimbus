@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildServer } from '../src/server';
 import { buildTestEnv } from './support/testEnv';
@@ -31,33 +31,34 @@ describe('fallback sur le cache', () => {
     expect(client.getRadarMosaic).not.toHaveBeenCalled();
   });
 
-  it('sert /forecast depuis le cache sans rappeler Meteo-France sur un hit', async () => {
+  it('sert /forecast depuis le cache sans jamais appeler Meteo-France', async () => {
     const client = createMockMeteoClient();
     app = await buildServer(buildTestEnv(), client);
 
-    await app.cache.set(cacheKeys.forecast(48.85, 2.35), { hourly: [] }, 60);
+    await app.cache.set(
+      cacheKeys.forecastGrid(1),
+      {
+        hourOffset: 1,
+        validTime: new Date().toISOString(),
+        bbox: { west: -5.5, south: 41, east: 10, north: 51.5 },
+        width: 2,
+        height: 2,
+        temperatureC: [18, 18, 18, 18],
+        precipitationMm: [0, 0, 0, 0],
+        windKmh: [10, 10, 10, 10],
+      },
+      60,
+    );
     const response = await app.inject({ method: 'GET', url: '/forecast?lat=48.85&lon=2.35' });
 
     expect(response.statusCode).toBe(200);
-    expect(client.getForecast).not.toHaveBeenCalled();
+    expect(response.json()).toHaveLength(1);
+    expect(response.json()[0].temperatureC).toBe(18);
+    expect(client.getForecastGrid).not.toHaveBeenCalled();
   });
 
-  it('interroge Meteo-France sur un miss puis met en cache le resultat', async () => {
+  it('renvoie 503 si aucune grille de prevision n est en cache', async () => {
     const client = createMockMeteoClient();
-    app = await buildServer(buildTestEnv(), client);
-
-    const response = await app.inject({ method: 'GET', url: '/forecast?lat=48.85&lon=2.35' });
-
-    expect(response.statusCode).toBe(200);
-    expect(client.getForecast).toHaveBeenCalledWith(48.85, 2.35);
-
-    const cached = await app.cache.get(cacheKeys.forecast(48.85, 2.35));
-    expect(cached).not.toBeNull();
-  });
-
-  it('renvoie 503 si Meteo-France echoue et qu il n y a rien en cache', async () => {
-    const client = createMockMeteoClient();
-    (client.getForecast as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'));
     app = await buildServer(buildTestEnv(), client);
 
     const response = await app.inject({ method: 'GET', url: '/forecast?lat=48.85&lon=2.35' });

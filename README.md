@@ -17,7 +17,7 @@ temporairement en panne.
 
 ```bash
 cp .env.example .env
-# renseigner METEOFRANCE_TOKEN et API_KEYS dans .env
+# renseigner METEOFRANCE_APPLICATION_ID et API_KEYS dans .env
 docker compose up --build
 ```
 
@@ -33,19 +33,41 @@ cp .env.example .env
 npm run dev
 ```
 
-## Obtenir un token Meteo-France
+## Obtenir un acces Meteo-France
+
+L'API Meteo-France utilise OAuth2 client_credentials, pas un token statique :
 
 1. Creer un compte sur https://portail-api.meteofrance.fr
-2. Souscrire aux APIs necessaires (radar, prevision/Promethee, vigilance) dans
-   la section "APIs" du portail.
-3. Generer une application/un token d'acces depuis l'espace developpeur.
-4. Renseigner `METEOFRANCE_TOKEN` dans `.env`.
+2. Souscrire aux APIs necessaires (radar DPRadar, vigilance DPVigilance, AROME)
+   dans la section "My APIs" du portail.
+3. Sur une des APIs souscrites, cliquer "Generate Token" pour obtenir un
+   `APPLICATION_ID` (chaine base64 utilisee comme secret Basic).
+4. Renseigner `METEOFRANCE_APPLICATION_ID` dans `.env`.
 
-Les chemins d'endpoint exacts (`METEOFRANCE_BASE_URL` + chemins codes dans
-`src/meteofrance/client.ts`, constante `ENDPOINTS`) dependent de l'offre
-souscrite : verifiez-les dans la doc du portail une fois votre abonnement
-actif et ajustez `ENDPOINTS` si besoin. Le reste de l'architecture (cache,
-routes, jobs, fallback) fonctionne independamment de ces chemins exacts.
+Au demarrage, le backend echange cet `APPLICATION_ID` contre un `access_token`
+de courte duree (~1h) via `POST METEOFRANCE_TOKEN_URL`, et le rafraichit
+automatiquement avant expiration (`src/meteofrance/client.ts`). Les appels de
+donnees se font ensuite sur `METEOFRANCE_BASE_URL` (`public-api.meteofrance.fr`,
+different du portail) avec ce token en Bearer.
+
+Les chemins d'endpoint exacts (constante `ENDPOINTS` dans
+`src/meteofrance/client.ts`) et les noms de coverage AROME (`AROME_COVERAGE_PREFIX`)
+sont marques TODO dans le code : la doc Swagger complete de chaque API n'est
+accessible qu'authentifie sur le portail. A verifier/ajuster avec un vrai
+abonnement actif. Le reste de l'architecture (cache, routes, jobs, fallback)
+fonctionne independamment de ces chemins exacts.
+
+### Prevision (`/forecast`) : particularite AROME
+
+Il n'existe pas d'endpoint JSON simple "prevision par point". Le modele AROME
+expose des grilles (WCS, format GeoTIFF ici) decodees avec le package
+`geotiff`. Comme l'API AROME est limitee a 50 requetes/minute, le scheduler
+pre-charge un nombre borne d'echeances (`src/meteofrance/forecastPlan.ts`,
+H+1 a H+24) pour 3 parametres (temperature, precipitation, vent), throttle les
+appels, et met chaque grille en cache Redis. La route `/forecast` ne fait
+qu'interpoler (bilineaire) la valeur au point demande depuis ces grilles en
+cache : elle n'appelle jamais Meteo-France a la requete, exactement comme
+`/radar/latest` et `/alerts`.
 
 ## Variables d'environnement
 
@@ -68,14 +90,15 @@ sont accessibles sans cle.
 
 ## Polling vs cache-aside
 
-- **Radar mosaique** et **vigilance** (tous departements) sont pre-charges en
-  arriere-plan par le scheduler (`src/jobs/scheduler.ts`), sur les intervalles
-  `RADAR_POLL_INTERVAL_MS` / `ALERTS_POLL_INTERVAL_MS`. Les routes ne font que
-  lire le cache.
-- **Prevision** (`/forecast`) et **tuile radar** (`/radar/latest?lat&lon&zoom`)
-  sont parametrees par point geographique arbitraire : elles suivent un
-  pattern cache-aside (lecture cache, appel Meteo-France uniquement sur miss,
-  mise en cache du resultat).
+- **Radar mosaique**, **vigilance** (tous departements) et **prevision**
+  (grilles AROME) sont pre-charges en arriere-plan par le scheduler
+  (`src/jobs/scheduler.ts`), sur les intervalles `RADAR_POLL_INTERVAL_MS` /
+  `ALERTS_POLL_INTERVAL_MS` / `FORECAST_POLL_INTERVAL_MS`. Les routes
+  correspondantes (`/radar/latest`, `/alerts`, `/forecast`) ne font que lire
+  le cache et, pour `/forecast`, interpoler le point demande.
+- **Tuile radar** (`/radar/latest?lat&lon&zoom`) reste parametree par point
+  geographique arbitraire et suit un pattern cache-aside (lecture cache, appel
+  Meteo-France uniquement sur miss, mise en cache du resultat).
 - Dans tous les cas, une reponse 5xx de Meteo-France n'est jamais renvoyee
   brute au client : si une donnee en cache existe (meme perimee), elle est
   servie ; sinon l'API renvoie un `503` explicite.
